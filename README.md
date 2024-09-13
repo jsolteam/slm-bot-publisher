@@ -1,8 +1,7 @@
-<div style="display: flex; justify-content: space-between; align-items: center;">
-    <p style="font-size: 20px; font-weight: bold">SLM Bot Publisher</p>
-    <img src="https://i.ibb.co/fHHNWjL/jsol-team-white.png" height="30px" alt="JSOL Team Logo"/>
-</div>
-<hr />
+# SLM Bot Publisher
+
+
+<img align="right" src="https://i.ibb.co/fHHNWjL/jsol-team-white.png" height="30px" alt="JSOL Team Logo"/>
 
 ![Golang Badge](https://img.shields.io/badge/Go-1.23-blue)
 ![GitHub License](https://img.shields.io/github/license/jsolteam/slm-bot-publisher)
