@@ -1,7 +1,7 @@
-./build
-./data
-./logs
-./.idea
+/build
+/data
+/logs
+/.idea
 
 .env
 go.sum
