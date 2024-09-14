@@ -104,7 +104,7 @@ func (t *BotTelegram) ListenUpdates() {
 	}
 }
 
-func GetPhotoFromTelegram(fileID string, token string) []byte {
+func GetFileFromTelegram(fileID string, token string) []byte {
 	filePathURL := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s", token, fileID)
 	resp, err := http.Get(filePathURL)
 	if err != nil {
