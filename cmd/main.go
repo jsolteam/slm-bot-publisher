@@ -24,6 +24,9 @@ func main() {
 		func(update tgbotapi.Update) {
 			telegram.HandleTelegramUpdate(update, storageData, discordBot, configData.TelegramToken)
 		},
+		func(update tgbotapi.Update) {
+			telegram.HandleTelegramRepostUpdate(update, storageData, discordBot, configData.TelegramToken)
+		},
 		func(updates []tgbotapi.Update) {
 			telegram.HandleTelegramUpdateGroup(updates, storageData, discordBot, configData.TelegramToken)
 		},

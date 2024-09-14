@@ -64,3 +64,30 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 		}
 	}
 }
+
+func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost) {
+	for _, discordChannel := range streamer.DiscordChannels {
+		session := d.Sessions[streamer.Name]
+
+		embed := &discordgo.MessageEmbed{
+			Author: &discordgo.MessageEmbedAuthor{
+				Name:    fmt.Sprintf("Переслано из %s", repost.ChannelName),
+				IconURL: repost.ChannelAvatar,
+				URL:     repost.RepostLink,
+			},
+			Description: repost.MessageContent,
+			Color:       1796358,
+			Image: &discordgo.MessageEmbedImage{
+				URL: repost.PhotoLink,
+			},
+			URL: repost.RepostLink,
+		}
+		_, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
+
+		if err != nil {
+			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки сообщения на Discord канал %s: %v", discordChannel.ChannelID, err))
+		} else {
+			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от стримера %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
+		}
+	}
+}

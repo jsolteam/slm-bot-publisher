@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/bwmarrin/discordgo"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"slm-bot-publisher/internal/core/model"
 	"slm-bot-publisher/internal/core/service/discord"
 	"slm-bot-publisher/internal/lib/storage"
 )
@@ -38,6 +40,47 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 		}
 
 		discordBot.SendMessageToDiscord(streamer, messageContent, attachments)
+	}
+}
+
+func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
+	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
+	channelPost := update.ChannelPost
+	channelRepostInfo := channelPost.ForwardFromChat
+
+	if streamer != nil && channelRepostInfo != nil {
+		messageContent := channelPost.Text
+		if messageContent == "" {
+			messageContent = channelPost.Caption
+		}
+
+		repostPhoto := ""
+		if channelPost.Photo != nil && channelPost.MediaGroupID == "" {
+			largestPhoto := channelPost.Photo[len(channelPost.Photo)-1]
+			repostPhoto = GetFileURLFromTelegram(largestPhoto.FileID, token)
+		}
+
+		if messageContent == "" && repostPhoto == "" {
+			return
+		}
+
+		repostChannelName := channelRepostInfo.Title
+		repostChannelAvatar := GetRepostChannelAvatar(channelRepostInfo.ID, token)
+
+		var repostLink string
+		if channelRepostInfo.UserName != "" && channelPost.ForwardFromMessageID != 0 {
+			repostLink = fmt.Sprintf("https://t.me/%s/%d", channelRepostInfo.UserName, channelPost.ForwardFromMessageID)
+		}
+
+		var discordRepost = model.DiscordRepost{
+			ChannelName:    repostChannelName,
+			ChannelAvatar:  repostChannelAvatar,
+			MessageContent: messageContent,
+			PhotoLink:      repostPhoto,
+			RepostLink:     repostLink,
+		}
+
+		discordBot.SendRepostToDiscord(streamer, discordRepost)
 	}
 }
 
