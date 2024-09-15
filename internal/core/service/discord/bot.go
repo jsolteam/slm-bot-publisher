@@ -1,9 +1,11 @@
 package discord
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
+	"io/ioutil"
 	"slm-bot-publisher/internal/core/model"
 	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
@@ -37,6 +39,16 @@ func NewDiscordBot(storage *storage.Storage, tgToken string) *BotDiscord {
 }
 
 func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File) {
+	filesData := make([][]byte, len(attachments))
+	for i, attachment := range attachments {
+		fileData, err := ioutil.ReadAll(attachment.Reader)
+		if err != nil {
+			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка чтения файла: %v", err))
+			return
+		}
+		filesData[i] = fileData
+	}
+
 	for _, discordChannel := range streamer.DiscordChannels {
 		session := d.Sessions[streamer.Name]
 
@@ -48,8 +60,11 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 		}
 
 		files := []*discordgo.File{}
-		if len(attachments) > 0 {
-			files = append(files, attachments...)
+		for i, fileData := range filesData {
+			files = append(files, &discordgo.File{
+				Name:   attachments[i].Name,
+				Reader: bytes.NewReader(fileData),
+			})
 		}
 
 		_, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
