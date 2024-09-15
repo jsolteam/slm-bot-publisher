@@ -1,9 +1,11 @@
 package discord
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
+	"io/ioutil"
 	"slm-bot-publisher/internal/core/model"
 	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
@@ -11,83 +13,138 @@ import (
 )
 
 type BotDiscord struct {
-	Sessions      map[string]*discordgo.Session
-	TelegramToken string
+	SessionCreators map[string]func() (*discordgo.Session, error)
+	TelegramToken   string
 }
 
 func NewDiscordBot(storage *storage.Storage, tgToken string) *BotDiscord {
-	sessions := make(map[string]*discordgo.Session)
+	sessionCreators := make(map[string]func() (*discordgo.Session, error))
 
 	for _, streamer := range storage.Streamers {
-		dg, err := discordgo.New("Bot " + streamer.DiscordBotToken)
-		if err != nil {
-			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка создания сессии Discord бота для %s: %v", streamer.Name, err))
-		}
-
-		err = dg.Open()
-		if err != nil {
-			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка подключения Discord бота для %s: %v", streamer.Name, err))
-		}
-
-		sessions[streamer.Name] = dg
-		logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Создана сессия Discord для %s", streamer.Name))
+		sessionCreators[streamer.Name] = func(s *model.Streamer) func() (*discordgo.Session, error) {
+			return func() (*discordgo.Session, error) {
+				return createSession(s)
+			}
+		}(&streamer)
 	}
 
-	return &BotDiscord{Sessions: sessions, TelegramToken: tgToken}
+	return &BotDiscord{SessionCreators: sessionCreators, TelegramToken: tgToken}
 }
 
+// createSession создает и открывает сессию Discord для стримера
+func createSession(streamer *model.Streamer) (*discordgo.Session, error) {
+	dg, err := discordgo.New("Bot " + streamer.DiscordBotToken)
+	if err != nil {
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка создания сессии Discord для %s: %v", streamer.Name, err))
+		return nil, err
+	}
+
+	if err = dg.Open(); err != nil {
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка подключения к Discord для %s: %v", streamer.Name, err))
+		return nil, err
+	}
+
+	logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сессия Discord для %s создана и открыта", streamer.Name))
+	return dg, nil
+}
+
+// sendWithSession - вспомогательная функция для отправки сообщений с использованием сессии
+func (d *BotDiscord) sendWithSession(streamer *model.Streamer, sendFunc func(*discordgo.Session) error) {
+	sessionCreator, exists := d.SessionCreators[streamer.Name]
+	if !exists {
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Стример %s не найден", streamer.Name))
+		return
+	}
+
+	session, err := sessionCreator()
+	if err != nil {
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка создания сессии для стримера %s: %v", streamer.Name, err))
+		return
+	}
+	defer session.Close()
+
+	if err = sendFunc(session); err != nil {
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки сообщения для стримера %s: %v", streamer.Name, err))
+	}
+}
+
+// SendMessageToDiscord отправляет сообщение с вложениями в Discord
 func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File) {
-	for _, discordChannel := range streamer.DiscordChannels {
-		session := d.Sessions[streamer.Name]
+	filesData := make([][]byte, len(attachments))
 
-		var prefix string
-		if strings.HasPrefix(discordChannel.Prefix, "@") {
-			prefix = discordChannel.Prefix // Прямое использование, если это @everyone или @here
-		} else {
-			prefix = fmt.Sprintf("<@&%s>", discordChannel.Prefix) // Использование ID роли
-		}
-
-		files := []*discordgo.File{}
-		if len(attachments) > 0 {
-			files = append(files, attachments...)
-		}
-
-		_, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
-			Content: prefix + " " + message,
-			Files:   files,
-		})
-
+	for i, attachment := range attachments {
+		fileData, err := ioutil.ReadAll(attachment.Reader)
 		if err != nil {
-			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки сообщения на Discord канал %s: %v", discordChannel.ChannelID, err))
-		} else {
-			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от стримера %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
+			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка чтения файла: %v", err))
+			return
 		}
+		filesData[i] = fileData
 	}
+
+	d.sendWithSession(streamer, func(session *discordgo.Session) error {
+		for _, discordChannel := range streamer.DiscordChannels {
+			prefix := formatPrefix(discordChannel.Prefix)
+
+			files := prepareFiles(attachments, filesData)
+
+			_, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
+				Content: prefix + " " + message,
+				Files:   files,
+			})
+
+			if err != nil {
+				return fmt.Errorf("ошибка отправки сообщения на канал %s: %v", discordChannel.ChannelID, err)
+			}
+			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
+		}
+		return nil
+	})
 }
 
+// SendRepostToDiscord отправляет репост в Discord
 func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost) {
-	for _, discordChannel := range streamer.DiscordChannels {
-		session := d.Sessions[streamer.Name]
+	d.sendWithSession(streamer, func(session *discordgo.Session) error {
+		for _, discordChannel := range streamer.DiscordChannels {
+			embed := &discordgo.MessageEmbed{
+				Author: &discordgo.MessageEmbedAuthor{
+					Name:    fmt.Sprintf("Переслано из %s", repost.ChannelName),
+					IconURL: repost.ChannelAvatar,
+					URL:     repost.RepostLink,
+				},
+				Description: repost.MessageContent,
+				Color:       1796358,
+				Image: &discordgo.MessageEmbedImage{
+					URL: repost.PhotoLink,
+				},
+				URL: repost.RepostLink,
+			}
 
-		embed := &discordgo.MessageEmbed{
-			Author: &discordgo.MessageEmbedAuthor{
-				Name:    fmt.Sprintf("Переслано из %s", repost.ChannelName),
-				IconURL: repost.ChannelAvatar,
-				URL:     repost.RepostLink,
-			},
-			Description: repost.MessageContent,
-			Color:       1796358,
-			Image: &discordgo.MessageEmbedImage{
-				URL: repost.PhotoLink,
-			},
-			URL: repost.RepostLink,
+			_, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
+			if err != nil {
+				return fmt.Errorf("ошибка отправки сообщения на канал %s: %v", discordChannel.ChannelID, err)
+			}
+			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Репост от %s успешно отправлен в канал %s", streamer.Name, discordChannel.ChannelID))
 		}
-		_, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
+		return nil
+	})
+}
 
-		if err != nil {
-			logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки сообщения на Discord канал %s: %v", discordChannel.ChannelID, err))
-		} else {
-			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от стримера %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
+// formatPrefix возвращает форматированный префикс для уведомлений
+func formatPrefix(prefix string) string {
+	if strings.HasPrefix(prefix, "@") {
+		return prefix // Прямое использование, если это @everyone или @here
+	}
+	return fmt.Sprintf("<@&%s>", prefix) // Использование ID роли
+}
+
+// prepareFiles подготавливает файлы для отправки
+func prepareFiles(attachments []*discordgo.File, filesData [][]byte) []*discordgo.File {
+	files := make([]*discordgo.File, len(attachments))
+	for i, fileData := range filesData {
+		files[i] = &discordgo.File{
+			Name:   attachments[i].Name,
+			Reader: bytes.NewReader(fileData),
 		}
 	}
+	return files
 }
