@@ -95,16 +95,18 @@ func (t *BotTelegram) ListenUpdates() {
 
 	updates := t.Bot.GetUpdatesChan(u)
 	for update := range updates {
-		if update.ChannelPost != nil && update.ChannelPost.ForwardFrom == nil && update.ChannelPost.ForwardFromChat == nil {
-			if update.ChannelPost.MediaGroupID != "" {
-				t.appendQueue(update)
-			} else {
+		if update.ChannelPost != nil {
+			if update.ChannelPost.ForwardFrom == nil && update.ChannelPost.ForwardFromChat == nil {
+				if update.ChannelPost.MediaGroupID != "" {
+					t.appendQueue(update)
+				} else {
+					logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
+					t.updateHandler(update)
+				}
+			} else if update.ChannelPost.ForwardFromChat != nil {
 				logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
-				t.updateHandler(update)
+				t.updateRepostHandler(update)
 			}
-		} else if update.ChannelPost.ForwardFromChat != nil {
-			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
-			t.updateRepostHandler(update)
 		}
 	}
 }
