@@ -52,6 +52,7 @@
 ```shell
 TELEGRAM_TOKEN=*Ваш токен Telegram бота*
 STREAMER_DATA_FILE=*Располежение файла конфига .json*
+DATABASE_PATH=*Путь к хранению файла sqlite*
 ```
 
 ### Конфиг

@@ -7,6 +7,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"slm-bot-publisher/internal/core/model"
+	"slm-bot-publisher/internal/lib/database/handlers"
+	modeldb "slm-bot-publisher/internal/lib/database/model"
 	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
 	"strings"
@@ -15,9 +17,10 @@ import (
 type BotDiscord struct {
 	SessionCreators map[string]func() (*discordgo.Session, error)
 	TelegramToken   string
+	DBHandlers      *handlers.DBHandlers
 }
 
-func NewDiscordBot(storage *storage.Storage, tgToken string) *BotDiscord {
+func NewDiscordBot(storage *storage.Storage, tgToken string, DBHandlers *handlers.DBHandlers) *BotDiscord {
 	sessionCreators := make(map[string]func() (*discordgo.Session, error))
 
 	for _, streamer := range storage.Streamers {
@@ -28,7 +31,7 @@ func NewDiscordBot(storage *storage.Storage, tgToken string) *BotDiscord {
 		}(&streamer)
 	}
 
-	return &BotDiscord{SessionCreators: sessionCreators, TelegramToken: tgToken}
+	return &BotDiscord{SessionCreators: sessionCreators, TelegramToken: tgToken, DBHandlers: DBHandlers}
 }
 
 // createSession создает и открывает сессию Discord для стримера
@@ -69,7 +72,7 @@ func (d *BotDiscord) sendWithSession(streamer *model.Streamer, sendFunc func(*di
 }
 
 // SendMessageToDiscord отправляет сообщение с вложениями в Discord
-func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File) {
+func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File, messageModel []modeldb.Message) {
 	filesData := make([][]byte, len(attachments))
 
 	for i, attachment := range attachments {
@@ -87,13 +90,31 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 
 			files := prepareFiles(attachments, filesData)
 
-			_, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
+			message, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
 				Content: prefix + " " + message,
 				Files:   files,
 			})
 
 			if err != nil {
 				return fmt.Errorf("ошибка отправки сообщения на канал %s: %v", discordChannel.ChannelID, err)
+			}
+
+			for idx, msg := range messageModel {
+				messageDB := modeldb.Message{
+					MainPost:      msg.MainPost,
+					ChannelID:     discordChannel.ChannelID,
+					TelegramMsgID: msg.TelegramMsgID,
+					DiscordMsgID:  message.ID,
+				}
+				if msg.TelegramAttachmentID != "" && message.Attachments[idx] != nil {
+					messageDB.TelegramAttachmentID = msg.TelegramAttachmentID
+					messageDB.DiscordAttachmentID = message.Attachments[idx].ID
+				}
+
+				err := d.DBHandlers.MessageHandlers.CreateMessage(&messageDB)
+				if err != nil {
+					logging.Log("Database", logrus.InfoLevel, fmt.Sprintf("Ошибка сохранения сообщения %d в базу", messageDB.TelegramMsgID))
+				}
 			}
 			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
 		}

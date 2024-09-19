@@ -8,6 +8,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"slm-bot-publisher/config"
+	"slm-bot-publisher/internal/core/service/discord"
+	"slm-bot-publisher/internal/lib/database/handlers"
+	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
 	"sync"
 	"time"
@@ -24,12 +27,14 @@ type BotTelegram struct {
 	updateGroupMutex     sync.Mutex
 	updateHandler        func(update tgbotapi.Update)
 	updateRepostHandler  func(update tgbotapi.Update)
+	updateEditHandler    func(update tgbotapi.Update)
 	updateGroupHandler   func(updates []tgbotapi.Update)
 	flushInterval        time.Duration
 	updateGroupFlushTime time.Duration
+	DBHandlers           *handlers.DBHandlers
 }
 
-func NewTelegramBot(config *config.Config, updateHandler, updateRepostHandler func(update tgbotapi.Update), updateGroupHandler func(updates []tgbotapi.Update), flushInterval, updateGroupFlushTime time.Duration) *BotTelegram {
+func NewTelegramBot(config *config.Config, storage *storage.Storage, discordBot *discord.BotDiscord, flushInterval, updateGroupFlushTime time.Duration, DBHandlers *handlers.DBHandlers) *BotTelegram {
 	bot, err := tgbotapi.NewBotAPI(config.TelegramToken)
 	if err != nil {
 		logging.Log("Telegram", logrus.PanicLevel, fmt.Sprintf("%v", err))
@@ -37,13 +42,23 @@ func NewTelegramBot(config *config.Config, updateHandler, updateRepostHandler fu
 	logging.Log("Telegram", logrus.InfoLevel, "Успешное подключение к боту Telegram")
 
 	bt := &BotTelegram{
-		Bot:                  bot,
-		updateGroups:         make(map[string]*UpdateGroup),
-		updateHandler:        updateHandler,
-		updateRepostHandler:  updateRepostHandler,
-		updateGroupHandler:   updateGroupHandler,
+		Bot:          bot,
+		updateGroups: make(map[string]*UpdateGroup),
+		updateHandler: func(update tgbotapi.Update) {
+			HandleTelegramUpdate(update, storage, discordBot, config.TelegramToken)
+		},
+		updateRepostHandler: func(update tgbotapi.Update) {
+			HandleTelegramRepostUpdate(update, storage, discordBot, config.TelegramToken)
+		},
+		updateEditHandler: func(update tgbotapi.Update) {
+			HandleTelegramEditUpdate(update, storage, discordBot, config.TelegramToken)
+		},
+		updateGroupHandler: func(updates []tgbotapi.Update) {
+			HandleTelegramUpdateGroup(updates, storage, discordBot, config.TelegramToken)
+		},
 		flushInterval:        flushInterval,
 		updateGroupFlushTime: updateGroupFlushTime,
+		DBHandlers:           DBHandlers,
 	}
 
 	go bt.startFlushRoutine()
@@ -107,6 +122,10 @@ func (t *BotTelegram) ListenUpdates() {
 				logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
 				t.updateRepostHandler(update)
 			}
+		}
+		if update.EditedChannelPost != nil {
+			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Отредактирован пост %d с канала %s", update.EditedChannelPost.MessageID, update.EditedChannelPost.Chat.Title))
+			t.updateEditHandler(update)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"slm-bot-publisher/internal/core/model"
 	"slm-bot-publisher/internal/core/service/discord"
+	modeldb "slm-bot-publisher/internal/lib/database/model"
 	"slm-bot-publisher/internal/lib/storage"
 )
 
@@ -20,8 +21,18 @@ func HandleTelegramUpdate(update tgbotapi.Update, storage *storage.Storage, disc
 			messageContent = channelPost.Caption
 		}
 
-		attachments := collectAttachments(channelPost, token)
-		discordBot.SendMessageToDiscord(streamer, messageContent, attachments)
+		attachments, attachmentsIDs := collectAttachments(channelPost, token)
+
+		var messageModel []modeldb.Message
+		messageModel = append(messageModel, modeldb.Message{
+			MainPost:      true,
+			TelegramMsgID: channelPost.MessageID,
+		})
+		if len(attachmentsIDs) > 0 {
+			messageModel[0].TelegramAttachmentID = attachmentsIDs[0]
+		}
+
+		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel)
 	}
 }
 
@@ -35,11 +46,24 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 		}
 
 		var attachments []*discordgo.File
-		for _, message := range updates {
-			attachments = append(attachments, collectAttachments(message.ChannelPost, token)...)
+		var messageModel []modeldb.Message
+		for idx, message := range updates {
+			fmt.Println(idx)
+			messageModel = append(messageModel, modeldb.Message{
+				MainPost:      idx == 0,
+				TelegramMsgID: message.ChannelPost.MessageID,
+			})
+			fmt.Println(messageModel[idx].MainPost)
+
+			attachmentsTG, attachmentsIDs := collectAttachments(message.ChannelPost, token)
+			attachments = append(attachments, attachmentsTG...)
+
+			if len(attachmentsIDs) > 0 {
+				messageModel[idx].TelegramAttachmentID = attachmentsIDs[0]
+			}
 		}
 
-		discordBot.SendMessageToDiscord(streamer, messageContent, attachments)
+		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel)
 	}
 }
 
@@ -84,9 +108,19 @@ func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage
 	}
 }
 
+func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
+	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
+	//channelPost := update.EditedChannelPost
+
+	if streamer != nil {
+
+	}
+}
+
 // Функция для сбора вложений
-func collectAttachments(channelPost *tgbotapi.Message, token string) []*discordgo.File {
+func collectAttachments(channelPost *tgbotapi.Message, token string) ([]*discordgo.File, []string) {
 	var attachments []*discordgo.File
+	var attachmentsIDs []string
 
 	// Функция для обработки различных вложений
 	addAttachment := func(fileID, fileName string, token string) {
@@ -96,6 +130,7 @@ func collectAttachments(channelPost *tgbotapi.Message, token string) []*discordg
 				Name:   fileName,
 				Reader: bytes.NewReader(data),
 			})
+			attachmentsIDs = append(attachmentsIDs, fileID)
 		}
 	}
 
@@ -146,5 +181,5 @@ func collectAttachments(channelPost *tgbotapi.Message, token string) []*discordg
 		addAttachment(channelPost.Sticker.FileID, "sticker.webp", token)
 	}
 
-	return attachments
+	return attachments, attachmentsIDs
 }
