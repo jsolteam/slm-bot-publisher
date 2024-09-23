@@ -51,7 +51,7 @@ func createSession(streamer *model.Streamer) (*discordgo.Session, error) {
 	return dg, nil
 }
 
-// sendWithSession - вспомогательная функция для отправки сообщений с использованием сессии
+// sendWithSession - вспомогательная функция для взаимодействия с Discord с использованием сессии
 func (d *BotDiscord) sendWithSession(streamer *model.Streamer, sendFunc func(*discordgo.Session) error) {
 	sessionCreator, exists := d.SessionCreators[streamer.Name]
 	if !exists {
@@ -67,7 +67,7 @@ func (d *BotDiscord) sendWithSession(streamer *model.Streamer, sendFunc func(*di
 	defer session.Close()
 
 	if err = sendFunc(session); err != nil {
-		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки сообщения для стримера %s: %v", streamer.Name, err))
+		logging.Log("Discord", logrus.ErrorLevel, fmt.Sprintf("Ошибка отправки запроса для стримера %s: %v", streamer.Name, err))
 	}
 }
 
@@ -146,6 +146,18 @@ func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.
 			}
 			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Репост от %s успешно отправлен в канал %s", streamer.Name, discordChannel.ChannelID))
 		}
+		return nil
+	})
+}
+
+// DeleteMessageFromDiscord удаляет сообщение из Discord
+func (d *BotDiscord) DeleteMessageFromDiscord(streamer *model.Streamer, channelID, msgID string) {
+	d.sendWithSession(streamer, func(session *discordgo.Session) error {
+		err := session.ChannelMessageDelete(channelID, msgID)
+		if err != nil {
+			return fmt.Errorf("ошибка удаления сообщения с ID %s в канале %s: %v", msgID, channelID, err)
+		}
+		logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение с ID %s успешно удалено из канала %s", msgID, channelID))
 		return nil
 	})
 }

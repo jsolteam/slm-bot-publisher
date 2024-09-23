@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
 	"slm-bot-publisher/internal/core/model"
 	"slm-bot-publisher/internal/core/service/discord"
+	"slm-bot-publisher/internal/lib/database/handlers"
 	modeldb "slm-bot-publisher/internal/lib/database/model"
 	"slm-bot-publisher/internal/lib/storage"
+	"slm-bot-publisher/logging"
+	"strings"
 )
+
+type CommandHandler func(update tgbotapi.Update, streamer *model.Streamer, bot *tgbotapi.BotAPI, discordBot *discord.BotDiscord, DBHandlers *handlers.DBHandlers)
 
 func HandleTelegramUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
 	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
@@ -48,12 +54,10 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 		var attachments []*discordgo.File
 		var messageModel []modeldb.Message
 		for idx, message := range updates {
-			fmt.Println(idx)
 			messageModel = append(messageModel, modeldb.Message{
 				MainPost:      idx == 0,
 				TelegramMsgID: message.ChannelPost.MessageID,
 			})
-			fmt.Println(messageModel[idx].MainPost)
 
 			attachmentsTG, attachmentsIDs := collectAttachments(message.ChannelPost, token)
 			attachments = append(attachments, attachmentsTG...)
@@ -114,6 +118,57 @@ func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, 
 
 	if streamer != nil {
 
+	}
+}
+
+func HandleTelegramCommand(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string, DBHandlers *handlers.DBHandlers) {
+	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
+	currentMsgID := update.ChannelPost.MessageID
+	commandsTelegram := map[string]CommandHandler{
+		"/delete": commandTelegramDelete,
+	}
+
+	if streamer != nil {
+		command := strings.Split(update.ChannelPost.Text, " ")[0]
+		if handler, exists := commandsTelegram[command]; exists {
+			bot, err := tgbotapi.NewBotAPI(token)
+			if err != nil {
+				logging.Log("Telegram", logrus.ErrorLevel, fmt.Sprintf("Ошибка при подключении к боту: %v", err))
+				return
+			}
+			DeletePostFromChannel(update.ChannelPost.Chat.ID, currentMsgID, bot)
+			handler(update, streamer, bot, discordBot, DBHandlers)
+		} else {
+			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Неизвестная команда: %s", command))
+		}
+	}
+}
+
+func commandTelegramDelete(update tgbotapi.Update, streamer *model.Streamer, bot *tgbotapi.BotAPI, discordBot *discord.BotDiscord, DBHandlers *handlers.DBHandlers) {
+	if update.ChannelPost.ReplyToMessage == nil {
+		return
+	}
+
+	deleteMsgID := update.ChannelPost.ReplyToMessage.MessageID
+	channelIDs := streamer.DiscordChannels
+
+	for idx, channel := range channelIDs {
+		messageIDs, err := DBHandlers.MessageHandlers.GetMessageByID(channel.ChannelID, deleteMsgID)
+		if err != nil || len(messageIDs) == 0 {
+			continue
+		}
+
+		if idx == 0 {
+			for _, msg := range messageIDs {
+				DeletePostFromChannel(update.ChannelPost.Chat.ID, msg.TelegramMsgID, bot)
+			}
+		}
+
+		discordBot.DeleteMessageFromDiscord(streamer, channel.ChannelID, messageIDs[0].DiscordMsgID)
+		err = DBHandlers.MessageHandlers.DeleteMessageByID(channel.ChannelID, deleteMsgID)
+		if err != nil {
+			logging.Log("Database", logrus.ErrorLevel, fmt.Sprintf("Не удалось удалить сообщения с ID Discord %s", messageIDs[0].DiscordMsgID))
+		}
 	}
 }
 

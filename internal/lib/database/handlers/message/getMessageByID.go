@@ -2,11 +2,19 @@ package message
 
 import modeldb "slm-bot-publisher/internal/lib/database/model"
 
-func (h *HandlerDBMessage) GetMessageByID(telegramMsgID uint64) ([]modeldb.Message, error) {
-	var messages []modeldb.Message
-	err := h.DB.Where("telegram_msg_id = ?", telegramMsgID).Find(&messages).Error
+func (h *HandlerDBMessage) GetMessageByID(channelID string, telegramMsgID int) ([]modeldb.Message, error) {
+	var message modeldb.Message
+
+	err := h.DB.Where("channel_id = ? AND telegram_msg_id = ?", channelID, telegramMsgID).First(&message).Error
 	if err != nil {
 		return nil, err
 	}
-	return messages, nil
+
+	var relatedMessages []modeldb.Message
+	err = h.DB.Where("discord_msg_id = ?", message.DiscordMsgID).Find(&relatedMessages).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return relatedMessages, nil
 }
