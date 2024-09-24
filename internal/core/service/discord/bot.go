@@ -72,7 +72,7 @@ func (d *BotDiscord) sendWithSession(streamer *model.Streamer, sendFunc func(*di
 }
 
 // SendMessageToDiscord отправляет сообщение с вложениями в Discord
-func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File, messageModel []modeldb.Message) {
+func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message string, attachments []*discordgo.File, messageModel []modeldb.Message, postLink string) {
 	filesData := make([][]byte, len(attachments))
 
 	for i, attachment := range attachments {
@@ -93,6 +93,9 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 			message, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
 				Content: prefix + " " + message,
 				Files:   files,
+				Embed: &discordgo.MessageEmbed{
+					Description: "Оригинальный пост: " + postLink,
+				},
 			})
 
 			if err != nil {

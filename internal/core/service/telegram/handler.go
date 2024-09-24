@@ -38,7 +38,12 @@ func HandleTelegramUpdate(update tgbotapi.Update, storage *storage.Storage, disc
 			messageModel[0].TelegramAttachmentID = attachmentsIDs[0]
 		}
 
-		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel)
+		var repostLink string
+		if channelPost.Chat.UserName != "" && channelPost.MessageID != 0 {
+			repostLink = fmt.Sprintf("https://t.me/%s/%d", channelPost.Chat.UserName, channelPost.MessageID)
+		}
+
+		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel, repostLink)
 	}
 }
 
@@ -67,7 +72,12 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 			}
 		}
 
-		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel)
+		var repostLink string
+		if updates[0].ChannelPost.Chat.UserName != "" && updates[0].ChannelPost.MessageID != 0 {
+			repostLink = fmt.Sprintf("https://t.me/%s/%d", updates[0].ChannelPost.Chat.UserName, updates[0].ChannelPost.MessageID)
+		}
+
+		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel, repostLink)
 	}
 }
 
