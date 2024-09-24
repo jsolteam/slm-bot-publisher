@@ -173,10 +173,12 @@ func collectAttachments(channelPost *tgbotapi.Message, token string) ([]*discord
 }
 
 func getMessageContent(channelPost *tgbotapi.Message) string {
-	if channelPost.Text != "" {
-		return channelPost.Text
+	text := channelPost.Text
+
+	if text == "" {
+		text = channelPost.Caption
 	}
-	return channelPost.Caption
+	return discord.FormatTelegramMessageToDiscord(text, channelPost.Entities)
 }
 
 func buildMessageModel(messageID int, attachmentsIDs []string, isMainPost bool) modeldb.Message {

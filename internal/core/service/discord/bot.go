@@ -144,7 +144,7 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 
 	d.sendWithSession(streamer, func(session *discordgo.Session) error {
 		for _, discordChannel := range streamer.DiscordChannels {
-			content := formatPrefix(discordChannel.Prefix) + " " + message
+			content := formatPrefix(discordChannel.Prefix) + "\n" + message
 			files := prepareFiles(attachments, filesData)
 
 			sentMessage, err := d.sendMessage(session, discordChannel.ChannelID, content, files, postLink)
@@ -243,7 +243,7 @@ func buildRepostEmbed(repost model.DiscordRepost) *discordgo.MessageEmbed {
 // EditMessageOnDiscord - редактирует сообщение в Discord
 func (d *BotDiscord) EditMessageOnDiscord(streamer *model.Streamer, channel *model.DiscordChannel, message, msgID string) {
 	d.sendWithSession(streamer, func(session *discordgo.Session) error {
-		content := formatPrefix(channel.Prefix) + " " + message
+		content := formatPrefix(channel.Prefix) + "\n" + message
 		_, err := session.ChannelMessageEdit(channel.ChannelID, msgID, content)
 		if err != nil {
 			return fmt.Errorf("ошибка изменения сообщения на канале %s: %v", channel.ChannelID, err)
