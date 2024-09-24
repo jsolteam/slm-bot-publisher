@@ -53,7 +53,7 @@ func NewTelegramBot(config *config.Config, storage *storage.Storage, discordBot 
 			HandleTelegramRepostUpdate(update, storage, discordBot, config.TelegramToken)
 		},
 		updateEditHandler: func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers) {
-			HandleTelegramEditUpdate(update, storage, discordBot, config.TelegramToken, DBHandlers)
+			HandleTelegramEditUpdate(update, storage, discordBot, DBHandlers)
 		},
 		updateGroupHandler: func(updates []tgbotapi.Update) {
 			HandleTelegramUpdateGroup(updates, storage, discordBot, config.TelegramToken)

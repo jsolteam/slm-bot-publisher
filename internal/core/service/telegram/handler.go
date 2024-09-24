@@ -19,30 +19,15 @@ type CommandHandler func(update tgbotapi.Update, streamer *model.Streamer, bot *
 
 func HandleTelegramUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
 	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
-	channelPost := update.ChannelPost
 
 	if streamer != nil {
-		messageContent := channelPost.Text
-		if messageContent == "" {
-			messageContent = channelPost.Caption
-		}
-
-		attachments, attachmentsIDs := collectAttachments(channelPost, token)
+		messageContent := getMessageContent(update.ChannelPost)
+		attachments, attachmentsIDs := collectAttachments(update.ChannelPost, token)
 
 		var messageModel []modeldb.Message
-		messageModel = append(messageModel, modeldb.Message{
-			MainPost:      true,
-			TelegramMsgID: channelPost.MessageID,
-		})
-		if len(attachmentsIDs) > 0 {
-			messageModel[0].TelegramAttachmentID = attachmentsIDs[0]
-		}
+		messageModel = append(messageModel, buildMessageModel(update.ChannelPost.MessageID, attachmentsIDs, true))
 
-		var repostLink string
-		if channelPost.Chat.UserName != "" && channelPost.MessageID != 0 {
-			repostLink = fmt.Sprintf("https://t.me/%s/%d", channelPost.Chat.UserName, channelPost.MessageID)
-		}
-
+		repostLink := buildRepostLink(update.ChannelPost.Chat.UserName, update.ChannelPost.MessageID)
 		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel, repostLink)
 	}
 }
@@ -51,32 +36,17 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 	streamer := storage.GetStreamerByTelegramID(updates[0].ChannelPost.Chat.ID)
 
 	if streamer != nil {
-		messageContent := updates[0].ChannelPost.Text
-		if messageContent == "" {
-			messageContent = updates[0].ChannelPost.Caption
-		}
+		messageContent := getMessageContent(updates[0].ChannelPost)
 
 		var attachments []*discordgo.File
 		var messageModel []modeldb.Message
-		for idx, message := range updates {
-			messageModel = append(messageModel, modeldb.Message{
-				MainPost:      idx == 0,
-				TelegramMsgID: message.ChannelPost.MessageID,
-			})
-
-			attachmentsTG, attachmentsIDs := collectAttachments(message.ChannelPost, token)
+		for idx, update := range updates {
+			attachmentsTG, attachmentsIDs := collectAttachments(update.ChannelPost, token)
 			attachments = append(attachments, attachmentsTG...)
-
-			if len(attachmentsIDs) > 0 {
-				messageModel[idx].TelegramAttachmentID = attachmentsIDs[0]
-			}
+			messageModel = append(messageModel, buildMessageModel(update.ChannelPost.MessageID, attachmentsIDs, idx == 0))
 		}
 
-		var repostLink string
-		if updates[0].ChannelPost.Chat.UserName != "" && updates[0].ChannelPost.MessageID != 0 {
-			repostLink = fmt.Sprintf("https://t.me/%s/%d", updates[0].ChannelPost.Chat.UserName, updates[0].ChannelPost.MessageID)
-		}
-
+		repostLink := buildRepostLink(updates[0].ChannelPost.Chat.UserName, updates[0].ChannelPost.MessageID)
 		discordBot.SendMessageToDiscord(streamer, messageContent, attachments, messageModel, repostLink)
 	}
 }
@@ -87,32 +57,18 @@ func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage
 	channelRepostInfo := channelPost.ForwardFromChat
 
 	if streamer != nil && channelRepostInfo != nil {
-		messageContent := channelPost.Text
-		if messageContent == "" {
-			messageContent = channelPost.Caption
-		}
-
-		repostPhoto := ""
-		if channelPost.Photo != nil && channelPost.MediaGroupID == "" {
-			largestPhoto := channelPost.Photo[len(channelPost.Photo)-1]
-			repostPhoto = GetFileURLFromTelegram(largestPhoto.FileID, token)
-		}
+		messageContent := getMessageContent(channelPost)
+		repostPhoto := getLargestPhotoURL(channelPost, token)
 
 		if messageContent == "" && repostPhoto == "" {
 			return
 		}
 
-		repostChannelName := channelRepostInfo.Title
-		repostChannelAvatar := GetRepostChannelAvatar(channelRepostInfo.ID, token)
+		repostLink := buildRepostLink(channelRepostInfo.UserName, channelPost.ForwardFromMessageID)
 
-		var repostLink string
-		if channelRepostInfo.UserName != "" && channelPost.ForwardFromMessageID != 0 {
-			repostLink = fmt.Sprintf("https://t.me/%s/%d", channelRepostInfo.UserName, channelPost.ForwardFromMessageID)
-		}
-
-		var discordRepost = model.DiscordRepost{
-			ChannelName:    repostChannelName,
-			ChannelAvatar:  repostChannelAvatar,
+		discordRepost := model.DiscordRepost{
+			ChannelName:    channelRepostInfo.Title,
+			ChannelAvatar:  GetRepostChannelAvatar(channelRepostInfo.ID, token),
 			MessageContent: messageContent,
 			PhotoLink:      repostPhoto,
 			RepostLink:     repostLink,
@@ -127,29 +83,17 @@ func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage
 	}
 }
 
-func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string, DBHandlers *handlers.DBHandlers) {
+func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, DBHandlers *handlers.DBHandlers) {
 	streamer := storage.GetStreamerByTelegramID(update.EditedChannelPost.Chat.ID)
 	channelPost := update.EditedChannelPost
 
-	messageContent := channelPost.Text
-	if messageContent == "" {
-		messageContent = channelPost.Caption
-	}
+	messageContent := getMessageContent(channelPost)
 
 	if streamer != nil {
-		channelIDs := streamer.DiscordChannels
-
-		for _, channel := range channelIDs {
+		for _, channel := range streamer.DiscordChannels {
 			messageIDs, err := DBHandlers.MessageHandlers.GetMessageByID(channel.ChannelID, channelPost.MessageID)
 			if err != nil || len(messageIDs) == 0 {
 				continue
-			}
-
-			for _, msg := range messageIDs {
-				if msg.MainPost && msg.TelegramMsgID == channelPost.MessageID {
-					break
-				}
-				return
 			}
 
 			discordBot.EditMessageOnDiscord(streamer, &channel, messageContent, messageIDs[0].DiscordMsgID)
@@ -160,12 +104,13 @@ func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, 
 func HandleTelegramCommand(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string, DBHandlers *handlers.DBHandlers) {
 	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
 	currentMsgID := update.ChannelPost.MessageID
-	commandsTelegram := map[string]CommandHandler{
-		"/delete": commandTelegramDelete,
-	}
 
 	if streamer != nil {
 		command := strings.Split(update.ChannelPost.Text, " ")[0]
+		commandsTelegram := map[string]CommandHandler{
+			"/delete": commandTelegramDelete,
+		}
+
 		if handler, exists := commandsTelegram[command]; exists {
 			bot, err := tgbotapi.NewBotAPI(token)
 			if err != nil {
@@ -186,9 +131,8 @@ func commandTelegramDelete(update tgbotapi.Update, streamer *model.Streamer, bot
 	}
 
 	deleteMsgID := update.ChannelPost.ReplyToMessage.MessageID
-	channelIDs := streamer.DiscordChannels
 
-	for idx, channel := range channelIDs {
+	for idx, channel := range streamer.DiscordChannels {
 		messageIDs, err := DBHandlers.MessageHandlers.GetMessageByID(channel.ChannelID, deleteMsgID)
 		if err != nil || len(messageIDs) == 0 {
 			continue
@@ -208,58 +152,88 @@ func commandTelegramDelete(update tgbotapi.Update, streamer *model.Streamer, bot
 	}
 }
 
-// Функция для сбора вложений
 func collectAttachments(channelPost *tgbotapi.Message, token string) ([]*discordgo.File, []string) {
 	var attachments []*discordgo.File
-	var attachmentsIDs []string
+	var attachmentIDs []string
 
-	// Функция для обработки различных вложений
-	addAttachment := func(fileID, fileName string, token string) {
+	addAttachment := func(fileID, fileName string) {
 		data := GetFileFromTelegram(fileID, token)
 		if len(data) > 0 {
 			attachments = append(attachments, &discordgo.File{
 				Name:   fileName,
 				Reader: bytes.NewReader(data),
 			})
-			attachmentsIDs = append(attachmentsIDs, fileID)
+			attachmentIDs = append(attachmentIDs, fileID)
 		}
 	}
 
-	// Обрабатываем фотографии
+	processMedia(channelPost, addAttachment)
+
+	return attachments, attachmentIDs
+}
+
+func getMessageContent(channelPost *tgbotapi.Message) string {
+	if channelPost.Text != "" {
+		return channelPost.Text
+	}
+	return channelPost.Caption
+}
+
+func buildMessageModel(messageID int, attachmentsIDs []string, isMainPost bool) modeldb.Message {
+	msg := modeldb.Message{
+		MainPost:      isMainPost,
+		TelegramMsgID: messageID,
+	}
+	if len(attachmentsIDs) > 0 {
+		msg.TelegramAttachmentID = attachmentsIDs[0]
+	}
+	return msg
+}
+
+func buildRepostLink(username string, messageID int) string {
+	if username != "" && messageID != 0 {
+		return fmt.Sprintf("https://t.me/%s/%d", username, messageID)
+	}
+	return ""
+}
+
+func getLargestPhotoURL(channelPost *tgbotapi.Message, token string) string {
 	if channelPost.Photo != nil && len(channelPost.Photo) > 0 {
-		// Ищем фото с наибольшим размером
-		largestPhoto := channelPost.Photo[0]
-		for _, photo := range channelPost.Photo {
-			if photo.FileSize > largestPhoto.FileSize {
-				largestPhoto = photo
-			}
-		}
-		addAttachment(largestPhoto.FileID, "photo.jpg", token)
+		largestPhoto := channelPost.Photo[len(channelPost.Photo)-1]
+		return GetFileURLFromTelegram(largestPhoto.FileID, token)
+	}
+	return ""
+}
+
+func processMedia(channelPost *tgbotapi.Message, addAttachment func(fileID, fileName string)) {
+	if channelPost.Photo != nil && len(channelPost.Photo) > 0 {
+		largestPhoto := channelPost.Photo[len(channelPost.Photo)-1]
+		addAttachment(largestPhoto.FileID, "photo.jpg")
 	}
 
 	// Обрабатываем видео
 	if channelPost.Video != nil {
-		addAttachment(channelPost.Video.FileID, "video.mp4", token)
+		addAttachment(channelPost.Video.FileID, "video.mp4")
 	}
 
 	// Обрабатываем видеокружки (VideoNote)
 	if channelPost.VideoNote != nil {
-		addAttachment(channelPost.VideoNote.FileID, "videonote.mp4", token)
+		addAttachment(channelPost.VideoNote.FileID, "videonote.mp4")
 	}
 
 	// Обрабатываем аудио
 	if channelPost.Audio != nil {
-		addAttachment(channelPost.Audio.FileID, "audio.mp3", token)
+		addAttachment(channelPost.Audio.FileID, "audio.mp3")
 	}
 
 	// Обрабатываем голосовые сообщения
 	if channelPost.Voice != nil {
-		addAttachment(channelPost.Voice.FileID, "voice.ogg", token)
+		addAttachment(channelPost.Voice.FileID, "voice.ogg")
 	}
 
 	// Обрабатываем документы
 	if channelPost.Document != nil {
-		addAttachment(channelPost.Document.FileID, channelPost.Document.FileName, token)
+		addAttachment(channelPost.Document.FileID, channelPost.Document.FileName)
 	}
 
 	// Обрабатываем анимации (GIF) - временно не работает корректно
@@ -269,8 +243,6 @@ func collectAttachments(channelPost *tgbotapi.Message, token string) ([]*discord
 
 	// Обрабатываем стикеры
 	if channelPost.Sticker != nil {
-		addAttachment(channelPost.Sticker.FileID, "sticker.webp", token)
+		addAttachment(channelPost.Sticker.FileID, "sticker.webp")
 	}
-
-	return attachments, attachmentsIDs
 }
