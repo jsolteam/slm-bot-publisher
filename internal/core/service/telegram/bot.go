@@ -8,7 +8,11 @@ import (
 	"io/ioutil"
 	"net/http"
 	"slm-bot-publisher/config"
+	"slm-bot-publisher/internal/core/service/discord"
+	"slm-bot-publisher/internal/lib/database/handlers"
+	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,13 +27,16 @@ type BotTelegram struct {
 	updateGroups         map[string]*UpdateGroup
 	updateGroupMutex     sync.Mutex
 	updateHandler        func(update tgbotapi.Update)
-	updateRepostHandler  func(update tgbotapi.Update)
+	updateRepostHandler  func(updates []tgbotapi.Update)
+	updateEditHandler    func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
 	updateGroupHandler   func(updates []tgbotapi.Update)
+	commandHandler       func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
 	flushInterval        time.Duration
 	updateGroupFlushTime time.Duration
+	DBHandlers           *handlers.DBHandlers
 }
 
-func NewTelegramBot(config *config.Config, updateHandler, updateRepostHandler func(update tgbotapi.Update), updateGroupHandler func(updates []tgbotapi.Update), flushInterval, updateGroupFlushTime time.Duration) *BotTelegram {
+func NewTelegramBot(config *config.Config, storage *storage.Storage, discordBot *discord.BotDiscord, flushInterval, updateGroupFlushTime time.Duration, DBHandlers *handlers.DBHandlers) *BotTelegram {
 	bot, err := tgbotapi.NewBotAPI(config.TelegramToken)
 	if err != nil {
 		logging.Log("Telegram", logrus.PanicLevel, fmt.Sprintf("%v", err))
@@ -37,13 +44,26 @@ func NewTelegramBot(config *config.Config, updateHandler, updateRepostHandler fu
 	logging.Log("Telegram", logrus.InfoLevel, "Успешное подключение к боту Telegram")
 
 	bt := &BotTelegram{
-		Bot:                  bot,
-		updateGroups:         make(map[string]*UpdateGroup),
-		updateHandler:        updateHandler,
-		updateRepostHandler:  updateRepostHandler,
-		updateGroupHandler:   updateGroupHandler,
+		Bot:          bot,
+		updateGroups: make(map[string]*UpdateGroup),
+		updateHandler: func(update tgbotapi.Update) {
+			HandleTelegramUpdate(update, storage, discordBot, config.TelegramToken)
+		},
+		updateRepostHandler: func(updates []tgbotapi.Update) {
+			HandleTelegramRepostUpdate(updates, storage, discordBot, config.TelegramToken)
+		},
+		updateEditHandler: func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers) {
+			HandleTelegramEditUpdate(update, storage, discordBot, DBHandlers)
+		},
+		updateGroupHandler: func(updates []tgbotapi.Update) {
+			HandleTelegramUpdateGroup(updates, storage, discordBot, config.TelegramToken)
+		},
+		commandHandler: func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers) {
+			HandleTelegramCommand(update, storage, discordBot, config.TelegramToken, DBHandlers)
+		},
 		flushInterval:        flushInterval,
 		updateGroupFlushTime: updateGroupFlushTime,
+		DBHandlers:           DBHandlers,
 	}
 
 	go bt.startFlushRoutine()
@@ -67,7 +87,11 @@ func (t *BotTelegram) flushQueue() {
 	for id, group := range t.updateGroups {
 		if now.Sub(group.Timestamp) >= t.updateGroupFlushTime {
 			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", group.Updates[0].ChannelPost.Chat.Title))
-			t.updateGroupHandler(group.Updates)
+			if group.Updates[0].ChannelPost.ForwardFromChat != nil {
+				t.updateRepostHandler(group.Updates)
+			} else {
+				t.updateGroupHandler(group.Updates)
+			}
 			delete(t.updateGroups, id)
 		}
 	}
@@ -95,18 +119,32 @@ func (t *BotTelegram) ListenUpdates() {
 
 	updates := t.Bot.GetUpdatesChan(u)
 	for update := range updates {
-		if update.ChannelPost != nil {
-			if update.ChannelPost.ForwardFrom == nil && update.ChannelPost.ForwardFromChat == nil {
-				if update.ChannelPost.MediaGroupID != "" {
+		switch {
+		case update.ChannelPost != nil:
+			channelPost := update.ChannelPost
+
+			if strings.HasPrefix(channelPost.Text, "/") {
+				logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получена команда %s с канала %s", channelPost.Text, channelPost.Chat.Title))
+				t.commandHandler(update, t.DBHandlers)
+			} else if channelPost.ForwardFrom == nil && channelPost.ForwardFromChat == nil {
+				if channelPost.MediaGroupID != "" {
 					t.appendQueue(update)
 				} else {
-					logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
+					logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", channelPost.Chat.Title))
 					t.updateHandler(update)
 				}
-			} else if update.ChannelPost.ForwardFromChat != nil {
-				logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", update.ChannelPost.Chat.Title))
-				t.updateRepostHandler(update)
+			} else if channelPost.ForwardFromChat != nil {
+				if channelPost.MediaGroupID != "" {
+					t.appendQueue(update)
+				} else {
+					logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", channelPost.Chat.Title))
+					t.updateRepostHandler([]tgbotapi.Update{update})
+				}
 			}
+
+		case update.EditedChannelPost != nil:
+			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Отредактирован пост %d с канала %s", update.EditedChannelPost.MessageID, update.EditedChannelPost.Chat.Title))
+			t.updateEditHandler(update, t.DBHandlers)
 		}
 	}
 }
@@ -219,4 +257,14 @@ func GetRepostChannelAvatar(chatID int64, token string) string {
 	}
 
 	return GetFileURLFromTelegram(largestAvatarFileID, token)
+}
+
+func DeletePostFromChannel(chatID int64, msgID int, bot *tgbotapi.BotAPI) {
+	deleteConfig := tgbotapi.DeleteMessageConfig{
+		ChatID:    chatID,
+		MessageID: msgID,
+	}
+	if _, err := bot.Request(deleteConfig); err != nil {
+		logging.Log("Telegram", logrus.ErrorLevel, fmt.Sprintf("Ошибка при удалении сообщения %d: %v", msgID, err))
+	}
 }

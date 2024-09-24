@@ -1,11 +1,11 @@
 package main
 
 import (
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 	"slm-bot-publisher/config"
 	"slm-bot-publisher/internal/core/service/discord"
 	"slm-bot-publisher/internal/core/service/telegram"
+	"slm-bot-publisher/internal/lib/database"
 	"slm-bot-publisher/internal/lib/storage"
 	"slm-bot-publisher/logging"
 	"time"
@@ -18,20 +18,10 @@ func main() {
 	configData := config.LoadConfig()
 	storageData := storage.NewStorage(configData.StreamerData)
 
-	discordBot := discord.NewDiscordBot(storageData, configData.TelegramToken)
-	telegramBot := telegram.NewTelegramBot(
-		configData,
-		func(update tgbotapi.Update) {
-			telegram.HandleTelegramUpdate(update, storageData, discordBot, configData.TelegramToken)
-		},
-		func(update tgbotapi.Update) {
-			telegram.HandleTelegramRepostUpdate(update, storageData, discordBot, configData.TelegramToken)
-		},
-		func(updates []tgbotapi.Update) {
-			telegram.HandleTelegramUpdateGroup(updates, storageData, discordBot, configData.TelegramToken)
-		},
-		10*time.Second,
-		3*time.Second)
+	dbHandlers := database.InitDB(configData.DatabasePath)
+
+	discordBot := discord.NewDiscordBot(storageData, configData.TelegramToken, dbHandlers)
+	telegramBot := telegram.NewTelegramBot(configData, storageData, discordBot, 10*time.Second, 3*time.Second, dbHandlers)
 
 	telegramBot.ListenUpdates()
 

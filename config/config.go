@@ -10,6 +10,7 @@ import (
 type Config struct {
 	TelegramToken string
 	StreamerData  string
+	DatabasePath  string
 }
 
 func LoadConfig() *Config {
@@ -21,6 +22,7 @@ func LoadConfig() *Config {
 	config := &Config{
 		TelegramToken: os.Getenv("TELEGRAM_TOKEN"),
 		StreamerData:  os.Getenv("STREAMER_DATA_FILE"),
+		DatabasePath:  os.Getenv("DATABASE_PATH"),
 	}
 
 	return config
