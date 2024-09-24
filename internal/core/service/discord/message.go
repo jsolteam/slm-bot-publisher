@@ -23,6 +23,10 @@ func FormatTelegramMessageToDiscord(message string, entities []tgbotapi.MessageE
 		entityStart := entity.Offset
 		entityEnd := entity.Offset + entity.Length
 
+		if entityStart < 0 || entityEnd > n {
+			continue
+		}
+
 		switch entity.Type {
 		case "bold":
 			openTags[entityStart] += "**"

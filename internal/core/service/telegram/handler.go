@@ -51,35 +51,49 @@ func HandleTelegramUpdateGroup(updates []tgbotapi.Update, storage *storage.Stora
 	}
 }
 
-func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
-	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
-	channelPost := update.ChannelPost
+func HandleTelegramRepostUpdate(updates []tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
+	streamer := storage.GetStreamerByTelegramID(updates[0].ChannelPost.Chat.ID)
+	channelPost := updates[0].ChannelPost
 	channelRepostInfo := channelPost.ForwardFromChat
 
 	if streamer != nil && channelRepostInfo != nil {
 		messageContent := getMessageContent(channelPost)
-		repostPhoto := getLargestPhotoURL(channelPost, token)
-
-		if messageContent == "" && repostPhoto == "" {
-			return
-		}
-
 		repostLink := buildRepostLink(channelRepostInfo.UserName, channelPost.ForwardFromMessageID)
+		var attachments []*discordgo.File
+
+		if messageContent == "" {
+			messageContent = "-----------------------------------------"
+		}
 
 		discordRepost := model.DiscordRepost{
 			ChannelName:    channelRepostInfo.Title,
 			ChannelAvatar:  GetRepostChannelAvatar(channelRepostInfo.ID, token),
 			MessageContent: messageContent,
-			PhotoLink:      repostPhoto,
 			RepostLink:     repostLink,
 		}
 
-		messageModel := modeldb.Message{
-			MainPost:      true,
-			TelegramMsgID: channelPost.MessageID,
+		var messageModel []modeldb.Message
+
+		if len(updates) > 1 {
+			for idx, update := range updates {
+				attachmentsTG, attachmentsIDs := collectAttachments(update.ChannelPost, token)
+				attachments = append(attachments, attachmentsTG...)
+				messageModel = append(messageModel, buildMessageModel(update.ChannelPost.MessageID, attachmentsIDs, idx == 0))
+			}
+		} else {
+			if channelPost.Photo == nil {
+				attachmentsTG, attachmentsIDs := collectAttachments(updates[0].ChannelPost, token)
+				attachments = append(attachments, attachmentsTG...)
+				messageModel = append(messageModel, buildMessageModel(updates[0].ChannelPost.MessageID, attachmentsIDs, true))
+			} else {
+				repostPhoto := getLargestPhotoURL(channelPost, token)
+				discordRepost.PhotoLink = repostPhoto
+				_, attachmentsIDs := collectAttachments(updates[0].ChannelPost, token)
+				messageModel = append(messageModel, buildMessageModel(updates[0].ChannelPost.MessageID, attachmentsIDs, true))
+			}
 		}
 
-		discordBot.SendRepostToDiscord(streamer, discordRepost, messageModel)
+		discordBot.SendRepostToDiscord(streamer, discordRepost, attachments, messageModel)
 	}
 }
 

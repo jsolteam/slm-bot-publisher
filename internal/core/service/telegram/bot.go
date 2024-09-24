@@ -27,7 +27,7 @@ type BotTelegram struct {
 	updateGroups         map[string]*UpdateGroup
 	updateGroupMutex     sync.Mutex
 	updateHandler        func(update tgbotapi.Update)
-	updateRepostHandler  func(update tgbotapi.Update)
+	updateRepostHandler  func(updates []tgbotapi.Update)
 	updateEditHandler    func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
 	updateGroupHandler   func(updates []tgbotapi.Update)
 	commandHandler       func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
@@ -49,8 +49,8 @@ func NewTelegramBot(config *config.Config, storage *storage.Storage, discordBot 
 		updateHandler: func(update tgbotapi.Update) {
 			HandleTelegramUpdate(update, storage, discordBot, config.TelegramToken)
 		},
-		updateRepostHandler: func(update tgbotapi.Update) {
-			HandleTelegramRepostUpdate(update, storage, discordBot, config.TelegramToken)
+		updateRepostHandler: func(updates []tgbotapi.Update) {
+			HandleTelegramRepostUpdate(updates, storage, discordBot, config.TelegramToken)
 		},
 		updateEditHandler: func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers) {
 			HandleTelegramEditUpdate(update, storage, discordBot, DBHandlers)
@@ -87,7 +87,11 @@ func (t *BotTelegram) flushQueue() {
 	for id, group := range t.updateGroups {
 		if now.Sub(group.Timestamp) >= t.updateGroupFlushTime {
 			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", group.Updates[0].ChannelPost.Chat.Title))
-			t.updateGroupHandler(group.Updates)
+			if group.Updates[0].ChannelPost.ForwardFromChat != nil {
+				t.updateRepostHandler(group.Updates)
+			} else {
+				t.updateGroupHandler(group.Updates)
+			}
 			delete(t.updateGroups, id)
 		}
 	}
@@ -130,8 +134,12 @@ func (t *BotTelegram) ListenUpdates() {
 					t.updateHandler(update)
 				}
 			} else if channelPost.ForwardFromChat != nil {
-				logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", channelPost.Chat.Title))
-				t.updateRepostHandler(update)
+				if channelPost.MediaGroupID != "" {
+					t.appendQueue(update)
+				} else {
+					logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Получено новое сообщение с канала %s", channelPost.Chat.Title))
+					t.updateRepostHandler([]tgbotapi.Update{update})
+				}
 			}
 
 		case update.EditedChannelPost != nil:

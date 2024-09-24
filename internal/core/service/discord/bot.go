@@ -182,7 +182,7 @@ func (d *BotDiscord) saveMessagesToDB(sentMessage *discordgo.Message, channelID 
 			TelegramMsgID: msg.TelegramMsgID,
 			DiscordMsgID:  sentMessage.ID,
 		}
-		if msg.TelegramAttachmentID != "" && sentMessage.Attachments[idx] != nil {
+		if msg.TelegramAttachmentID != "" && len(sentMessage.Attachments) > 0 && sentMessage.Attachments[idx] != nil {
 			messageDB.TelegramAttachmentID = msg.TelegramAttachmentID
 			messageDB.DiscordAttachmentID = sentMessage.Attachments[idx].ID
 		}
@@ -207,16 +207,25 @@ func prepareFiles(attachments []*discordgo.File, filesData [][]byte) []*discordg
 }
 
 // SendRepostToDiscord - отправляет репост в Discord
-func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost, messageModel modeldb.Message) {
+func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost, attachments []*discordgo.File, messageModel []modeldb.Message) {
+	filesData := readFilesData(attachments)
+	if filesData == nil {
+		return
+	}
+
 	d.sendWithSession(streamer, func(session *discordgo.Session) error {
 		embed := buildRepostEmbed(repost)
 		for _, discordChannel := range streamer.DiscordChannels {
-			sentMessage, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
+			files := prepareFiles(attachments, filesData)
+			sentMessage, err := session.ChannelMessageSendComplex(discordChannel.ChannelID, &discordgo.MessageSend{
+				Files: files,
+				Embed: embed,
+			})
 			if err != nil {
 				return fmt.Errorf("ошибка отправки сообщения на канал %s: %v", discordChannel.ChannelID, err)
 			}
 
-			d.saveMessagesToDB(sentMessage, discordChannel.ChannelID, []modeldb.Message{messageModel})
+			d.saveMessagesToDB(sentMessage, discordChannel.ChannelID, messageModel)
 			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщения от %s успешно отправлено в канал %s", streamer.Name, discordChannel.ChannelID))
 		}
 		return nil
