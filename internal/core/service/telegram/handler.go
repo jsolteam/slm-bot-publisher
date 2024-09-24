@@ -108,16 +108,42 @@ func HandleTelegramRepostUpdate(update tgbotapi.Update, storage *storage.Storage
 			RepostLink:     repostLink,
 		}
 
-		discordBot.SendRepostToDiscord(streamer, discordRepost)
+		messageModel := modeldb.Message{
+			MainPost:      true,
+			TelegramMsgID: channelPost.MessageID,
+		}
+
+		discordBot.SendRepostToDiscord(streamer, discordRepost, messageModel)
 	}
 }
 
-func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string) {
-	streamer := storage.GetStreamerByTelegramID(update.ChannelPost.Chat.ID)
-	//channelPost := update.EditedChannelPost
+func HandleTelegramEditUpdate(update tgbotapi.Update, storage *storage.Storage, discordBot *discord.BotDiscord, token string, DBHandlers *handlers.DBHandlers) {
+	streamer := storage.GetStreamerByTelegramID(update.EditedChannelPost.Chat.ID)
+	channelPost := update.EditedChannelPost
+
+	messageContent := channelPost.Text
+	if messageContent == "" {
+		messageContent = channelPost.Caption
+	}
 
 	if streamer != nil {
+		channelIDs := streamer.DiscordChannels
 
+		for _, channel := range channelIDs {
+			messageIDs, err := DBHandlers.MessageHandlers.GetMessageByID(channel.ChannelID, channelPost.MessageID)
+			if err != nil || len(messageIDs) == 0 {
+				continue
+			}
+
+			for _, msg := range messageIDs {
+				if msg.MainPost && msg.TelegramMsgID == channelPost.MessageID {
+					break
+				}
+				return
+			}
+
+			discordBot.EditMessageOnDiscord(streamer, &channel, messageContent, messageIDs[0].DiscordMsgID)
+		}
 	}
 }
 

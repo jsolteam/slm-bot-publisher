@@ -123,7 +123,7 @@ func (d *BotDiscord) SendMessageToDiscord(streamer *model.Streamer, message stri
 }
 
 // SendRepostToDiscord отправляет репост в Discord
-func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost) {
+func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.DiscordRepost, messageModel modeldb.Message) {
 	d.sendWithSession(streamer, func(session *discordgo.Session) error {
 		for _, discordChannel := range streamer.DiscordChannels {
 			embed := &discordgo.MessageEmbed{
@@ -140,12 +140,38 @@ func (d *BotDiscord) SendRepostToDiscord(streamer *model.Streamer, repost model.
 				URL: repost.RepostLink,
 			}
 
-			_, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
+			message, err := session.ChannelMessageSendEmbed(discordChannel.ChannelID, embed)
 			if err != nil {
 				return fmt.Errorf("ошибка отправки сообщения на канал %s: %v", discordChannel.ChannelID, err)
 			}
+
+			messageDB := modeldb.Message{
+				MainPost:      messageModel.MainPost,
+				ChannelID:     discordChannel.ChannelID,
+				TelegramMsgID: messageModel.TelegramMsgID,
+				DiscordMsgID:  message.ID,
+			}
+
+			err = d.DBHandlers.MessageHandlers.CreateMessage(&messageDB)
+			if err != nil {
+				logging.Log("Database", logrus.InfoLevel, fmt.Sprintf("Ошибка сохранения сообщения %d в базу", messageDB.TelegramMsgID))
+			}
+
 			logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Репост от %s успешно отправлен в канал %s", streamer.Name, discordChannel.ChannelID))
 		}
+		return nil
+	})
+}
+
+// EditMessageOnDiscord отправляет репост в Discord
+func (d *BotDiscord) EditMessageOnDiscord(streamer *model.Streamer, channel *model.DiscordChannel, message, msgID string) {
+	d.sendWithSession(streamer, func(session *discordgo.Session) error {
+		msgContent := formatPrefix(channel.Prefix) + " " + message
+		_, err := session.ChannelMessageEdit(channel.ChannelID, msgID, msgContent)
+		if err != nil {
+			return fmt.Errorf("ошибка изменения сообщения на канале %s: %v", channel.ChannelID, err)
+		}
+		logging.Log("Discord", logrus.InfoLevel, fmt.Sprintf("Сообщение от %s с ID %s успешно изменено в канале %s", streamer.Name, msgID, channel.ChannelID))
 		return nil
 	})
 }

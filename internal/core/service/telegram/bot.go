@@ -28,7 +28,7 @@ type BotTelegram struct {
 	updateGroupMutex     sync.Mutex
 	updateHandler        func(update tgbotapi.Update)
 	updateRepostHandler  func(update tgbotapi.Update)
-	updateEditHandler    func(update tgbotapi.Update)
+	updateEditHandler    func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
 	updateGroupHandler   func(updates []tgbotapi.Update)
 	commandHandler       func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers)
 	flushInterval        time.Duration
@@ -52,8 +52,8 @@ func NewTelegramBot(config *config.Config, storage *storage.Storage, discordBot 
 		updateRepostHandler: func(update tgbotapi.Update) {
 			HandleTelegramRepostUpdate(update, storage, discordBot, config.TelegramToken)
 		},
-		updateEditHandler: func(update tgbotapi.Update) {
-			HandleTelegramEditUpdate(update, storage, discordBot, config.TelegramToken)
+		updateEditHandler: func(update tgbotapi.Update, DBHandlers *handlers.DBHandlers) {
+			HandleTelegramEditUpdate(update, storage, discordBot, config.TelegramToken, DBHandlers)
 		},
 		updateGroupHandler: func(updates []tgbotapi.Update) {
 			HandleTelegramUpdateGroup(updates, storage, discordBot, config.TelegramToken)
@@ -136,7 +136,7 @@ func (t *BotTelegram) ListenUpdates() {
 
 		case update.EditedChannelPost != nil:
 			logging.Log("Telegram", logrus.InfoLevel, fmt.Sprintf("Отредактирован пост %d с канала %s", update.EditedChannelPost.MessageID, update.EditedChannelPost.Chat.Title))
-			t.updateEditHandler(update)
+			t.updateEditHandler(update, t.DBHandlers)
 		}
 	}
 }
