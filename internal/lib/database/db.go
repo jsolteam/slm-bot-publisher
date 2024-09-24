@@ -28,7 +28,7 @@ func InitDB(dbFilePath string) *handlers.DBHandlers {
 	}
 
 	// Создание файла для логов запросов базы данных
-	logFile, err := os.OpenFile("logging/db_queries.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile("logs/db_queries.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		logging.Log("Database", logrus.PanicLevel, fmt.Sprintf("Ошибка создания файла логов: %v", err))
 		return nil

@@ -2,7 +2,6 @@
 /data
 /logs
 /.idea
-/logging
 
 .env
 go.sum
