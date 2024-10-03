@@ -22,6 +22,9 @@ func HandleTelegramUpdate(update tgbotapi.Update, storage *storage.Storage, disc
 
 	if streamer != nil {
 		messageContent := getMessageContent(update.ChannelPost)
+		if checkMessageStreamTwitch(messageContent, streamer.Name) {
+			return
+		}
 		attachments, attachmentsIDs := collectAttachments(update.ChannelPost, token)
 
 		var messageModel []modeldb.Message
@@ -193,6 +196,12 @@ func getMessageContent(channelPost *tgbotapi.Message) string {
 		text = channelPost.Caption
 	}
 	return discord.FormatTelegramMessageToDiscord(text, channelPost.Entities)
+}
+
+func checkMessageStreamTwitch(message string, streamerName string) bool {
+	message = strings.ToLower(message)
+	streamerName = strings.ToLower(streamerName)
+	return strings.Contains(message, "https://twitch.tv/"+streamerName) || strings.Contains(message, "twitch.tv/"+streamerName)
 }
 
 func buildMessageModel(messageID int, attachmentsIDs []string, isMainPost bool) modeldb.Message {
